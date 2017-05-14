@@ -71,9 +71,19 @@ typedef struct TestCase_s
 {
     uint64 stalls;
     uint64 customers;
-    uint64 max;
-    uint64 min;
 } TestCase_t;
+
+typedef struct TestResult_s
+{
+    uint64 min;
+    uint64 max;
+} TestResult_t;
+
+typedef struct TestSets_s
+{
+    char *input;
+    char *correctOutput;
+}Testsets_t;
 
 /****************************************************************************************
  Macros
@@ -82,103 +92,123 @@ typedef struct TestCase_s
 /****************************************************************************************
  Forward declarations
 *****************************************************************************************/
-void   getTestCases(FILE *fp, TestCase_t testCases[], int nbrOfTestcases);
-int    getNumberOfTestCases(FILE *fp);
-uint64 getNumberOfStalls(char line[]);
-uint64 getNumberOfCustomers(char line[]);
-int    getLine(char line[], size_t buflen, FILE *stream);
+static int getNextTestCase(FILE *fp, TestCase_t *testCase);
+//static void   getTestCases(FILE *fp, TestCase_t testCases[], int nbrOfTestcases);
+static int    getNumberOfTestCases(FILE *fp);
+static uint64 getNumberOfStalls(char line[]);
+static uint64 getNumberOfCustomers(char line[]);
+static int    getLine(char line[], size_t buflen, FILE *stream);
+static void findBathroomStalls(TestCase_t *testCase, TestResult_t *testRes);
 
-uint64 getNumberOfLargeGroups(uint64 sizeLargeGroup, uint64 sizeSmallGroup, uint64 stallsFree, uint64 totalGroups);
-uint64 getLayers(uint64 customers);
-void   calcStallsLeftRight(uint64 stalls, uint64 *stallsLeft, uint64 *stallsRight);
+static uint64 getNumberOfLargeGroups(uint64 sizeLargeGroup, uint64 sizeSmallGroup, uint64 stallsFree, uint64 totalGroups);
+static uint64 getLayers(uint64 customers);
+static void   calcStallsLeftRight(uint64 stalls, uint64 *stallsLeft, uint64 *stallsRight);
 
-void outputToFile(TestCase_t testCases[], int entries, char *outputFile);
-void checkOutputFile(char *output, char *correctOutput);
-void printOutput(TestCase_t testCases[], int entries);
+static void resultToFile(TestResult_t *testRes, int testCaseIdx, FILE *fp);
+static void compareOutputFile(char *output, char *correctOutput);
+void printOutput(TestCase_t *testCase, TestResult_t *testRes, int testCaseIdx);
 
 /****************************************************************************************
  Local data
 *****************************************************************************************/
 int main (void)
 {
-    FILE *fp;
-    int nbrTestCases = 0;
+    FILE *fp_input, *fp_output;
 
-    //char input[] = "Debug/input.txt";
+    Testsets_t sets[] = {
+            {
+                    .input = "testData/C-small-practice-1.in",
+                    .correctOutput = "testData/CorrectOutputSmallPractice1.txt"
+            },
+            {
+                    .input = "testData/C-small-practice-2.in",
+                    .correctOutput = "testData/CorrectOutputSmallPractice2.txt"
+            },
+            {
+                    .input = "testData/C-large-practice.in",
+                    .correctOutput = "testData/CorrectOutputLargePractice.txt"
+            },
+    };
 
-    //char input[] = "Debug/C-small-practice-1.in";
-    //char correctOutput[] = "Debug/CorrectOutputSmallPractice1.txt";
-
-    //char input[] = "Debug/C-small-practice-2.in";
-    //char correctOutput[] = "Debug/CorrectOutputSmallPractice2.txt";
-
-    char input[] = "Debug/C-large-practice.in";
-    char correctOutput[] = "Debug/CorrectOutputLargePractice.txt";
+    int numberOfTestSets = sizeof(sets)/sizeof(sets[0]);
 
     char output[] = "Debug/output.txt";
 
-    fp = fopen(input, "r");
-
-    if (fp == NULL)
+    for (int i = 0; i < numberOfTestSets ; i++)
     {
-       perror("Error while opening the file.\n");
-       exit(EXIT_FAILURE);
+        fp_input = fopen(sets[i].input, "r");
+        if (fp_input == NULL)
+        {
+           perror("Error while opening the file.\n");
+           exit(EXIT_FAILURE);
+        }
+
+        fp_output = fopen(output, "wb");
+        if (fp_output == NULL)
+        {
+           perror("Error while opening the file.\n");
+           exit(EXIT_FAILURE);
+        }
+
+        int nbrTestCases = getNumberOfTestCases(fp_input);
+
+        int testCaseIdx = 1;
+
+        TestCase_t testCase = {0};
+        TestResult_t testRes = {0};
+
+        while (getNextTestCase(fp_input, &testCase) == 0 && testCaseIdx <= nbrTestCases)
+        {
+            findBathroomStalls(&testCase, &testRes);
+
+            //printOutput(&testCase, &testRes, testCaseIdx);
+            resultToFile(&testRes, testCaseIdx, fp_output);
+            testCaseIdx++;
+        }
+
+        fclose(fp_input);
+        fclose(fp_output);
+
+        compareOutputFile(output, sets[i].correctOutput);
     }
 
-    nbrTestCases = getNumberOfTestCases(fp);
+    return 0;
+}
 
-    TestCase_t *testCases = calloc(nbrTestCases, sizeof(*testCases));
+void findBathroomStalls(TestCase_t *testCase, TestResult_t *testRes)
+{
+    uint64 stallsToLeft;
+    uint64 stallsToRight;
 
-    getTestCases(fp, testCases, nbrTestCases);
+    uint64 lastLayer = getLayers(testCase->customers);
+    uint64 custPrevLayers = pow(2, lastLayer - 1) - 1;
+    uint64 stallsLastLayer = testCase->stalls - custPrevLayers;
+    uint64 nbrGroupsLastLayer = pow(2, lastLayer - 1);
+    uint64 sizeLargeGroup = stallsLastLayer/nbrGroupsLastLayer + (stallsLastLayer % nbrGroupsLastLayer != 0); // ciel
 
-    fclose(fp);
-
-    int currentCase = 0;
-
-    while (currentCase < nbrTestCases)
+    if (sizeLargeGroup == 1)
     {
-        uint64 stallsToLeft;
-        uint64 stallsToRight;
-        TestCase_t *curTC = &testCases[currentCase];
+        stallsToLeft = 0;
+        stallsToRight = 0;
+    }
+    else
+    {
+        uint64 customersLastLayer = testCase->customers - custPrevLayers;
+        uint64 sizeSmallGroup = sizeLargeGroup - 1; // size of small group is always one less than number of big group
+        uint64 largeGroups = getNumberOfLargeGroups(sizeLargeGroup, sizeSmallGroup, stallsLastLayer, nbrGroupsLastLayer);
 
-        uint64 lastLayer = getLayers(curTC->customers);
-        uint64 custPrevLayers = pow(2, lastLayer - 1) - 1;
-        uint64 stallsLastLayer = curTC->stalls - custPrevLayers;
-        uint64 nbrGroupsLastLayer = pow(2, lastLayer - 1);
-        uint64 sizeLargeGroup = stallsLastLayer/nbrGroupsLastLayer + (stallsLastLayer % nbrGroupsLastLayer != 0); // ciel
-
-        if (sizeLargeGroup == 1)
+        if (largeGroups >= customersLastLayer)
         {
-            stallsToLeft = 0;
-            stallsToRight = 0;
+            calcStallsLeftRight(sizeLargeGroup, &stallsToLeft, &stallsToRight);
         }
         else
         {
-            uint64 customersLastLayer = curTC->customers - custPrevLayers;
-            uint64 sizeSmallGroup = sizeLargeGroup - 1; // size of small group is always one less than number of big group
-            uint64 largeGroups = getNumberOfLargeGroups(sizeLargeGroup, sizeSmallGroup, stallsLastLayer, nbrGroupsLastLayer);
-
-            if (largeGroups >= customersLastLayer)
-            {
-                calcStallsLeftRight(sizeLargeGroup, &stallsToLeft, &stallsToRight);
-            }
-            else
-            {
-                calcStallsLeftRight(sizeSmallGroup, &stallsToLeft, &stallsToRight);
-            }
+            calcStallsLeftRight(sizeSmallGroup, &stallsToLeft, &stallsToRight);
         }
-
-        curTC->max = MAX(stallsToLeft, stallsToRight);
-        curTC->min = MIN(stallsToLeft, stallsToRight);
-
-        currentCase++;
     }
 
-    printOutput(testCases, nbrTestCases);
-    outputToFile(testCases, nbrTestCases, output);
-    checkOutputFile(output, correctOutput);
-
-    return 0;
+    testRes->max = MAX(stallsToLeft, stallsToRight);
+    testRes->min = MIN(stallsToLeft, stallsToRight);
 }
 
 /*
@@ -221,28 +251,30 @@ void calcStallsLeftRight(uint64 stalls, uint64 *stallsLeft, uint64 *stallsRight)
 }
 
 /**
- * Reads test cases from file and fills them into the preallocated memory
+ *
+ * @param fp
+ * @param testCase
+ * @return
  */
-void getTestCases(FILE *fp, TestCase_t testCases[], int nbrOfTestcases)
+static int getNextTestCase(FILE *fp, TestCase_t *testCase)
 {
-    char *line = malloc(MAX_LINE_LENGTH);
-    int i = 0;
+    char line[MAX_LINE_LENGTH] = {0};
+    int ret = 1; // no test case found
 
-    while((getLine(line, MAX_LINE_LENGTH, fp) != -1) && (i < nbrOfTestcases))
+    if (getLine(line, sizeof(line), fp) != -1)
     {
-        testCases[i].stalls = getNumberOfStalls(line);
-        testCases[i].customers = getNumberOfCustomers(line);
-
-        i++;
-        line = malloc(MAX_LINE_LENGTH);
+        testCase->stalls = getNumberOfStalls(line);
+        testCase->customers = getNumberOfCustomers(line);
+        ret = 0;
     }
-    free(line);
+
+    return ret;
 }
 
 /**
  * Number of stalls is the first number in a line
  */
-uint64 getNumberOfStalls(char line[])
+static uint64 getNumberOfStalls(char line[])
 {
     return atoll(line);
 }
@@ -250,7 +282,7 @@ uint64 getNumberOfStalls(char line[])
 /**
  * Number of customers is the second number in a line
  */
-uint64 getNumberOfCustomers(char line[])
+static uint64 getNumberOfCustomers(char line[])
 {
     int i = 0;
     while(line[i] != ' ')
@@ -265,16 +297,16 @@ uint64 getNumberOfCustomers(char line[])
 /*
  * Number of test cases is the first line in a file.
  */
-int getNumberOfTestCases(FILE *fp)
+static int getNumberOfTestCases(FILE *fp)
 {
-    char *line = malloc(MAX_LINE_LENGTH);
+    char line[MAX_LINE_LENGTH] = {0};
 
-    getLine(line, MAX_LINE_LENGTH, fp);
+    getLine(line, sizeof(line), fp);
 
     return atoi(line);
 }
 
-int getLine(char line[], size_t buflen, FILE *stream)
+static int getLine(char line[], size_t buflen, FILE *stream)
 {
     int i = 0;
     char c = getc(stream);
@@ -284,7 +316,7 @@ int getLine(char line[], size_t buflen, FILE *stream)
         return EOF;
     }
 
-    while(c != EOF && c != '\n' && i < buflen)
+    while(c != EOF && c != '\n' && i < buflen - 1)
     {
        line[i++] = c;
        c = getc(stream);
@@ -296,38 +328,19 @@ int getLine(char line[], size_t buflen, FILE *stream)
 }
 
 /*
- * Writes the test results to an output file
+ * Writes the test results to an correctOutput file
  */
-void outputToFile(TestCase_t testCases[], int entries, char *outputFile)
+static void resultToFile(TestResult_t *testRes, int testCaseIdx, FILE *fp)
 {
-    FILE *fp;
-    fp = fopen(outputFile,"wb"); // read mode
-
-    if (fp == NULL)
-    {
-       perror("Error while opening the file.\n");
-       exit(EXIT_FAILURE);
-    }
-
-    for (int i = 0; i < entries; i++)
-    {
-        fprintf(fp, "Case #%d: %I64d %I64d\n", i + 1, testCases[i].max, testCases[i].min);
-    }
-
-    fclose(fp);
+    fprintf(fp, "Case #%d: %I64d %I64d\n", testCaseIdx, testRes->max, testRes->min);
 }
 
-void printOutput(TestCase_t testCases[], int entries)
+void printOutput(TestCase_t *testCase, TestResult_t *testRes, int testCaseIdx)
 {
-    int i;
-
-    for (i = 0; i < entries; i++)
-    {
-        printf("Case #%d: %I64d,\t%I64d,\t%I64d,\t%I64d\n", i + 1, testCases[i].stalls , testCases[i].customers, testCases[i].max, testCases[i].min);
-    }
+    printf("Case #%d: %I64d,\t%I64d,\t%I64d,\t%I64d\n", testCaseIdx, testCase->stalls , testCase->customers, testRes->max, testRes->min);
 }
 
-void checkOutputFile(char *output, char *correctOutput)
+void compareOutputFile(char *output, char *correctOutput)
 {
     char ch1, ch2;
     int cnt = 0;
@@ -359,7 +372,7 @@ void checkOutputFile(char *output, char *correctOutput)
 
        if (ch1 == ch2)
        {
-           printf("Files are identical \n");
+           printf("%s, %s are identical \n", output, correctOutput);
        }
 
        else if (ch1 != ch2)
@@ -371,8 +384,3 @@ void checkOutputFile(char *output, char *correctOutput)
        fclose(fp2);
     }
 }
-
-
-
-
-
