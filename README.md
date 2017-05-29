@@ -1,7 +1,7 @@
 # BathroomStalls
 Google Code Jam 2017
 
-# Algorithm
+## Algorithm
     
      Definitions:
      Group =    A number of consecutive free stalls, in the beginning there is only one group.
